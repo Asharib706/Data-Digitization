@@ -58,7 +58,7 @@ def append_product_data_to_excel(product_data, excel_file_path):
             df.to_excel(writer, sheet_name="Product Details", index=False, header=False, startrow=startrow)
 
 # Function 3: Process the invoice and update the Excel file
-def process_invoice(uploaded_file, output_directory, model_name="gemini-1.5-flash-8b"):
+def process_invoice(uploaded_file, model_name="gemini-1.5-flash-8b"):
     invoice_data = extract_invoice_data(uploaded_file, model_name)
 
     if invoice_data is None:
@@ -75,14 +75,20 @@ def process_invoice(uploaded_file, output_directory, model_name="gemini-1.5-flas
         product["invoice_number"] = invoice_number
         product["invoice_date"] = invoice_date
 
-    # Define output directory
-    os.makedirs(output_directory, exist_ok=True)
+    # Get the directory of the uploaded file
+    input_file_path = uploaded_file.name
+    input_directory = os.path.dirname(input_file_path)
+    output_directory = input_directory  # Set output folder same as input folder
 
     # Define output file path
-    file_name = os.path.splitext(uploaded_file.name)[0] + "_output.xlsx"
+    file_name = os.path.splitext(os.path.basename(uploaded_file.name))[0] + "_output.xlsx"
     excel_file_path = os.path.join(output_directory, file_name)
 
     append_product_data_to_excel(products, excel_file_path)
+
+    # Print full paths of input and output
+    print(f"Input file path: {os.path.abspath(uploaded_file.name)}")
+    print(f"Output file path: {os.path.abspath(excel_file_path)}")
 
     print(f"Invoice data processed and saved to {excel_file_path}.")
 
@@ -94,13 +100,11 @@ def upload_images_streamlit():
         "Choose invoice images", type=["jpg", "jpeg", "png"], accept_multiple_files=True
     )
 
-    output_directory = "./output_files"
-
     if uploaded_files:
         for uploaded_file in uploaded_files:
-            process_invoice(uploaded_file, output_directory)
+            process_invoice(uploaded_file)
 
-        st.success(f"All invoices processed. Files saved in the folder: {output_directory}")
+        st.success("All invoices processed. Files saved in the respective input folders.")
 
 if __name__ == "__main__":
     upload_images_streamlit()
