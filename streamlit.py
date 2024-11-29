@@ -1,32 +1,56 @@
 import streamlit as st
+import pandas as pd
 import os
 import json
-import pandas as pd
-from openpyxl import load_workbook
+from pymongo import MongoClient
 from datetime import datetime
+from openpyxl import load_workbook
 import numpy as np
+from io import BytesIO
 import google.generativeai as genai
+import tempfile
 from dotenv import load_dotenv
 load_dotenv()
+# Configure Gemini API
+genai.configure(api_key=os.environ["API_KEY"])
 
-# Configure the API key for Gemini
-genai.configure(api_key=os.getenv("API_KEY"))
+# MongoDB Configuration
+MONGO_URI = os.environ["MONGO_URI"]
+DB_NAME = "invoice_db"
+COLLECTION_NAME = "product_details"
 
-# Function 1: Extract data using Gemini
-def extract_invoice_data(image_path, model_name="gemini-1.5-flash-8b"):
+# MongoDB client setup
+client = MongoClient(MONGO_URI)
+db = client[DB_NAME]
+collection = db[COLLECTION_NAME]
+
+# Streamlit UI
+st.title("Invoice Data Processor with Streamlit")
+st.sidebar.header("Upload Files")
+uploaded_files = st.sidebar.file_uploader("Upload invoice images", accept_multiple_files=True, type=["jpg", "png", "jpeg"])
+download_button = st.button("Generate and Download Summary")
+
+# Function: Extract data using Gemini
+def extract_invoice_data(image_bytes, model_name="gemini-1.5-flash-8b"):
     """
     Extracts data from an invoice image using the Gemini model.
     """
-    # Upload image to Gemini
-    myfile = genai.upload_file(image_path)
-    if myfile is None:
-        raise ValueError("File upload failed!")
+    # Save the image bytes to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+        temp_file.write(image_bytes)
+        temp_file_path = temp_file.name  # Get the file path
 
-    # Initialize model
-    model = genai.GenerativeModel(model_name)
+    try:
+        # Upload the temporary file to Gemini
+        myfile = genai.upload_file(temp_file_path)
+        if myfile is None:
+            raise ValueError("File upload failed!")
 
-    # Define the prompt for data extraction
-    prompt = """
+        # Initialize model
+        model = genai.GenerativeModel(model_name)
+
+        # Define the prompt for data extraction
+        prompt = """
 Extract the following fields from the given image if it represents an invoice or financial report:
 
 ### Fields to Extract:
@@ -67,135 +91,133 @@ Extract the following fields from the given image if it represents an invoice or
 Ensure the output is in the specified JSON format for consistency and ease of processing.
 """
 
+        # Get extraction result
+        result = model.generate_content([myfile, prompt])
+        result_text = result.text if hasattr(result, "text") else result.choices[0].text
 
-    # Get extraction result
-    result = model.generate_content([myfile, prompt])
-    result_text = result.text if hasattr(result, 'text') else result.choices[0].text
-
-    # Debug: Print raw response from model
-    st.write("Raw Response from Gemini Model:", result_text)
-
-    try:
-        # Parse result as JSON
-        start_index = result_text.find('{')
-        end_index = result_text.rfind('}') + 1
+        # Parse the JSON response
+        start_index = result_text.find("{")
+        end_index = result_text.rfind("}") + 1
         cleaned_result = result_text[start_index:end_index]
 
-        # Debug: Print cleaned result before attempting to load as JSON
-        st.write("Cleaned Result for JSON Parsing:", cleaned_result)
-
         invoice_data = json.loads(cleaned_result)
-    except json.JSONDecodeError as e:
-        st.error(f"Failed to parse JSON. Error: {e}")
-        st.error(f"Raw response: {result_text}")
+
+        # Debugging: Print extracted data to Streamlit
+        st.write("Extracted Invoice Data:", invoice_data)
+
+        return invoice_data
+    except Exception as e:
+        print(f"Error during invoice extraction: {e}")
+        return None
+    finally:
+        # Ensure the temporary file is deleted
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+# Function: Append product data to MongoDB
+def append_to_mongodb(invoice_data):
+    """
+    Appends invoice data to MongoDB. Updates existing entries or inserts new ones.
+    """
+    if not invoice_data or "data" not in invoice_data:
+        print("No product data found in the invoice.")
+        return
+
+    # Extract general information
+    store_name = invoice_data.get("store_name", None)
+    invoice_number = invoice_data.get("invoice_number", None)
+    invoice_date = invoice_data.get("invoice_date", None)
+    invoice_data["store_name"] = store_name
+    invoice_data["invoice_number"] = invoice_number
+    invoice_data["invoice_date"] = invoice_date
+
+    # Check and process product items
+    for product in invoice_data["data"]:
+        # Add general invoice details to each product
+        
+        # Update or insert product into MongoDB
+        collection.update_one(
+            {
+                "invoice_number": invoice_number,
+                "product_name": product["product_name"],
+            },
+            {
+                "$set": product,
+            },
+            upsert=True
+        )
+
+# Function: Generate summary from MongoDB
+def generate_summary_from_mongodb():
+    all_data = list(collection.find())
+    if not all_data:
         return None
 
-    return invoice_data
+    df = pd.DataFrame(all_data)
+    if df.empty:
+        return None
 
-# Function 2: Append product data to the Product Details sheet
-def append_product_data_to_excel(product_data, excel_file_path):
-    """
-    Appends extracted product data to the Product Details sheet in the Excel file without appending column names.
-    """
-    # Convert product data to DataFrame
-    df = pd.DataFrame(product_data)
-    df['invoice_date'] = pd.to_datetime(df['invoice_date'], format='%m/%d/%Y', errors='coerce')
-    df['month_year'] = df['invoice_date'].dt.to_period('M')
-    df['gst_amount'] = (df['total_price'] * df['gst%']) / 100
+    df["invoice_date"] = pd.to_datetime(df["invoice_date"], format="%m/%d/%Y", errors="coerce")
+    df["month_year"] = df["invoice_date"].dt.to_period("M")
+    df["gst_amount"] = (df["total_price"] * df["gst%"]) / 100
 
-    threshold = 1e-3
-    df.loc[((df['unit_price'] * df['quantity']) > df['total_price']) & (df['discount'] == 0), 'discount'] = \
-    np.where(abs((df['unit_price'] * df['quantity']) - df['total_price']) < threshold, 0,
-             (df['unit_price'] * df['quantity']) - df['total_price'])
-    # Remove duplicate rows based on all columns
-    df = df.drop_duplicates()
-
-    # Reorder columns
-    columns_order = [
-        "invoice_date",
-        "invoice_number",
-        "store_name",
-        "product_name",
-        "unit_price",
-        "quantity",
-        "total_price",
-        "discount",
-        "gst%",
-        "gst_amount",
-        "month_year"
-    ]
-    df = df[columns_order]
-
-    # Append to Excel without including column names
-    if os.path.exists(excel_file_path):
-        with pd.ExcelWriter(excel_file_path, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-            df.to_excel(writer, sheet_name="Product Details", index=False, header=False,
-                        startrow=writer.sheets["Product Details"].max_row)
-    else:
-        with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name="Product Details", index=False)
-
-# Function 3: Generate summary from Product Details sheet
-def generate_summary_from_product_details(excel_file_path):
-    """
-    Reads the Product Details sheet, generates a summary, and writes it to the Summary by Month sheet.
-    """
-    # Load the Product Details sheet
-    df = pd.read_excel(excel_file_path, sheet_name="Product Details")
-    # Generate summary grouped by month
-    summary_df = df.groupby('month_year').agg({
-        'quantity': 'sum',
-        'total_price': 'sum',
-        'discount': 'sum',
-        'gst_amount': 'sum'
+    summary_df = df.groupby("month_year").agg({
+        "quantity": "sum",
+        "total_price": "sum",
+        "discount": "sum",
+        "gst_amount": "sum"
     }).reset_index()
 
-    # Save summary to the Summary by Month sheet
-    with pd.ExcelWriter(excel_file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-        summary_df.to_excel(writer, sheet_name="Summary by Month", index=False)
+    return summary_df
 
-# Streamlit UI and logic
-def main():
-    st.title("Invoice Processing App")
-    uploaded_files = st.file_uploader("Upload Invoice Images", accept_multiple_files=True, type=["jpg", "png", "jpeg"])
-    
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            # Save uploaded file locally in the original folder
-            input_path = os.path.join(os.path.dirname(__file__), uploaded_file.name)
-            with open(input_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            # Print input file path
-            st.write(f"Input File Path: {os.path.abspath(input_path)}")
+# Main Processing
+if uploaded_files:
+    all_products = []
 
-            # Define Excel file path in the same directory as the input image
-            excel_file_path = os.path.join(os.path.dirname(input_path), "output.xlsx")
+    for uploaded_file in uploaded_files:
+        # Read file as bytes for Gemini API
+        image_bytes = uploaded_file.read()
+        invoice_data = extract_invoice_data(image_bytes)
 
-            # Print output file path
-            st.write(f"Output File Path: {os.path.abspath(excel_file_path)}")
+        if invoice_data:
+            store_name = invoice_data["store_name"]
+            invoice_number = invoice_data["invoice_number"]
+            invoice_date = invoice_data["invoice_date"]
 
-            # Process each uploaded file
-            invoice_data = extract_invoice_data(input_path)
-            if invoice_data is not None:
-                # Prepare product data for Excel
-                store_name = invoice_data["store_name"]
-                invoice_number = invoice_data["invoice_number"]
-                invoice_date = invoice_data["invoice_date"]
+            for product in invoice_data["data"]:
+                product.update({
+                    "store_name": store_name,
+                    "invoice_number": invoice_number,
+                    "invoice_date": invoice_date
+                })
 
-                products = invoice_data["data"]
-                for product in products:
-                    product["store_name"] = store_name
-                    product["invoice_number"] = invoice_number
-                    product["invoice_date"] = invoice_date
+            all_products.extend(invoice_data["data"])
 
-                # Append product data to Excel
-                append_product_data_to_excel(products, excel_file_path)
+    # Append extracted data to MongoDB
+    append_to_mongodb({"data": all_products})
+    st.success("Invoice data processed and stored in MongoDB!")
 
-                # Generate summary from updated product details
-                generate_summary_from_product_details(excel_file_path)
+# Generate and download output
+if download_button:
+    summary_df = generate_summary_from_mongodb()
 
-                st.success(f"Processed {uploaded_file.name}. Output saved to {excel_file_path}.")
+    if summary_df is not None:
+        output_buffer = BytesIO()
 
-if __name__ == "__main__":
-    main()
+        with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+            # Save detailed data
+            product_df = pd.DataFrame(list(collection.find()))
+            product_df.to_excel(writer, sheet_name="Product Details", index=False)
+
+            # Save summary data
+            summary_df.to_excel(writer, sheet_name="Summary by Month", index=False)
+
+        output_buffer.seek(0)
+        st.download_button(
+            label="Download Output File",
+            data=output_buffer,
+            file_name="output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.error("No data available to generate the summary.")
