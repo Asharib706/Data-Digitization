@@ -88,7 +88,7 @@ def process_invoice(uploaded_file, output_directory, model_name="gemini-1.5-flas
 
 # Function 4: Streamlit interface for multiple file uploads
 def upload_images_streamlit():
-    st.title("Batch Invoice Processing with Gemini")
+    st.title("Invoice Processing")
 
     uploaded_files = st.file_uploader(
         "Choose invoice images", type=["jpg", "jpeg", "png"], accept_multiple_files=True
