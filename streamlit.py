@@ -45,12 +45,12 @@ Extract the following fields from the given image if it represents an invoice or
 2. **Item Details (for each product or service):**
    - **Product/Item Name**: The name of the product or item. If unavailable, use the invoice number as the product name.
    - **Unit Price**: Price of a single unit of the product. If unavailable, default to `0`.
-   - **Quantity**: Quantity of product. If unavailable, default to `0`. can be float value
+   - **Quantity**: Quantity of product. If unavailable, default to `0`. Can be float value.
    - **Total Price**: The total price for the item (calculated as `unit_price × quantity` if not explicitly provided). If unavailable, default to `0`.
    - **Discount**: Any discounts applied to the item or total. If unavailable, default to `0`.
-   - **GST%**: The GST percentage applied to each item or given in total. If unavailable, default to `0`
+   - **GST%**: The GST percentage applied to each item or given in total. If unavailable, default to `0`.
 
-   Dont extract the total of the invoice just the individual products
+   Don't extract the total of the invoice, just the individual products.
 ### Output Format:
 
 {
@@ -90,6 +90,7 @@ Ensure the output is in the specified JSON format for consistency and ease of pr
         return None
     
     return invoice_data
+
 # Function 2: Append product data to the Product Details sheet
 def append_product_data_to_excel(product_data, excel_file_path):
     df = pd.DataFrame(product_data)
@@ -109,7 +110,7 @@ def append_product_data_to_excel(product_data, excel_file_path):
             df.to_excel(writer, sheet_name="Product Details", index=False, header=False, startrow=startrow)
 
 # Function 3: Process the invoice and update the Excel file
-def process_invoice(uploaded_file, excel_file_path, model_name="gemini-1.5-flash-8b"):
+def process_invoice(uploaded_file, output_directory, model_name="gemini-1.5-flash-8b"):
     invoice_data = extract_invoice_data(uploaded_file, model_name)
 
     if invoice_data is None:
@@ -126,23 +127,32 @@ def process_invoice(uploaded_file, excel_file_path, model_name="gemini-1.5-flash
         product["invoice_number"] = invoice_number
         product["invoice_date"] = invoice_date
 
+    # Define output file path
+    file_name = os.path.splitext(uploaded_file.name)[0] + "_output.xlsx"
+    excel_file_path = os.path.join(output_directory, file_name)
+
     append_product_data_to_excel(products, excel_file_path)
 
     print(f"Invoice data processed and appended to {excel_file_path}. Summary updated.")
 
-# Function 4: Streamlit interface for file upload and processing
-def upload_image_streamlit():
-    st.title("Invoice Processing with Gemini")
-    
-    # Upload image file
-    uploaded_file = st.file_uploader("Choose an invoice image", type=["jpg", "jpeg", "png"])
+# Function 4: Streamlit interface for multiple file uploads
+def upload_images_streamlit():
+    st.title("Batch Invoice Processing with Gemini")
 
-    if uploaded_file is not None:
-        # Process the invoice
-        excel_file_path = "output.xlsx"
-        process_invoice(uploaded_file, excel_file_path)
+    # Upload multiple image files
+    uploaded_files = st.file_uploader(
+        "Choose invoice images", type=["jpg", "jpeg", "png"], accept_multiple_files=True
+    )
 
-        st.success(f"Invoice processed and data appended to {excel_file_path}. Summary updated.")
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            # Get the directory of the uploaded file
+            output_directory = os.path.dirname(uploaded_file.name)
+            
+            # Process each invoice
+            process_invoice(uploaded_file, output_directory)
+
+        st.success("All invoices processed and saved in their respective directories.")
 
 if __name__ == "__main__":
-    upload_image_streamlit()
+    upload_images_streamlit()
