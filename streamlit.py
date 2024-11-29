@@ -100,6 +100,8 @@ def upload_images_streamlit():
     uploaded_files = st.file_uploader(
         "Choose invoice images", type=["jpg", "jpeg", "png"], accept_multiple_files=True
     )
+    st.success(uploaded_files)
+
 
     if uploaded_files:
         for uploaded_file in uploaded_files:
