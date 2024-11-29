@@ -58,7 +58,8 @@ def append_product_data_to_excel(product_data, excel_file_path):
             df.to_excel(writer, sheet_name="Product Details", index=False, header=False, startrow=startrow)
 
 # Function 3: Process the invoice and update the Excel file
-def process_invoice(uploaded_file, model_name="gemini-1.5-flash-8b"):
+# Function 3: Process the invoice and update the Excel file
+def process_invoice(uploaded_file, output_directory, model_name="gemini-1.5-flash-8b"):
     invoice_data = extract_invoice_data(uploaded_file, model_name)
 
     if invoice_data is None:
@@ -81,7 +82,7 @@ def process_invoice(uploaded_file, model_name="gemini-1.5-flash-8b"):
     output_directory = input_directory  # Set output folder same as input folder
 
     # Define output file path
-    file_name = os.path.splitext(os.path.basename(uploaded_file.name))[0] + "_output.xlsx"
+    file_name = os.path.splitext(uploaded_file.name)[0] + "_output.xlsx"
     excel_file_path = os.path.join(output_directory, file_name)
 
     append_product_data_to_excel(products, excel_file_path)
@@ -102,9 +103,9 @@ def upload_images_streamlit():
 
     if uploaded_files:
         for uploaded_file in uploaded_files:
-            process_invoice(uploaded_file)
+            process_invoice(uploaded_file, output_directory="")  # Output directory will be determined dynamically.
 
-        st.success("All invoices processed. Files saved in the respective input folders.")
+        st.success(f"All invoices processed. Files saved in the respective input folders.")
 
 if __name__ == "__main__":
     upload_images_streamlit()
