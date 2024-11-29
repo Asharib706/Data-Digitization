@@ -161,7 +161,7 @@ def generate_summary_from_mongodb():
     df["year-month"] = df["invoice_date"].dt.to_period("M")
     df["gst_amount"] = (df["total_price"] * df["gst%"]) / 100
 
-    summary_df = df.groupby("month_year").agg({
+    summary_df = df.groupby("year-month").agg({
         "quantity": "sum",
         "total_price": "sum",
         "discount": "sum",
