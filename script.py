@@ -185,24 +185,31 @@ def process_invoice(image_path, excel_file_path, model_name="gemini-1.5-flash-8b
     print(f"Invoice data processed and appended to {excel_file_path}. Summary updated.")
 
 # Function 5: GUI for Image Upload
-def upload_image_gui():
+def upload_images_gui():
     """
-    Opens a dialog to select an image file and processes it.
+    Opens a dialog to select multiple image files and processes them.
     """
     root = tk.Tk()
     root.withdraw()  # Hide the root window
 
-    # Open file dialog to select an image
-    image_path = filedialog.askopenfilename(title="Select an Invoice Image", filetypes=[("Image files", "*.jpg;*.jpeg;*.png")])
+    # Open file dialog to select multiple images
+    image_paths = filedialog.askopenfilenames(
+        title="Select Invoice Images",
+        filetypes=[("Image files", "*.jpg;*.jpeg;*.png")]
+    )
 
-    if image_path:
-        print(f"Image selected: {image_path}")
-        # Call the process_invoice function to handle the image
+    if image_paths:
+        print(f"Images selected: {image_paths}")
         excel_file_path = "output.xlsx"  # Specify the output file path
-        process_invoice(image_path, excel_file_path)
+
+        for image_path in image_paths:
+            print(f"Processing: {image_path}")
+            process_invoice(image_path, excel_file_path)
+        
+        print(f"All selected invoices processed. Data saved in {excel_file_path}.")
     else:
-        print("No image selected.")
+        print("No images selected.")
 
 # Main execution
 if __name__ == "__main__":
-    upload_image_gui()
+    upload_images_gui()
