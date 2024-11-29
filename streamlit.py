@@ -6,6 +6,8 @@ from openpyxl import load_workbook
 from datetime import datetime
 import numpy as np
 import google.generativeai as genai
+from dotenv import load_dotenv
+load_dotenv()
 
 # Configure the API key for Gemini
 genai.configure(api_key=os.getenv("API_KEY"))
@@ -28,8 +30,43 @@ def extract_invoice_data(image_path, model_name="gemini-1.5-flash-8b"):
 Extract the following fields from the given image if it represents an invoice or financial report:
 
 ### Fields to Extract:
-... (same prompt as above)
+1. **General Information:**
+   - **Store/Invoice Name**: The name of the store or invoice title (if available).
+   - **Invoice/Receipt Number**: Unique identifier for the invoice or receipt.
+   - **Invoice Date**: The date of the invoice in the format MM/DD/YYYY. If the date is missing, use today’s date.
+
+2. **Item Details (for each product or service):**
+   - **Product/Item Name**: The name of the product or item. If unavailable, use the invoice number as the product name.
+   - **Unit Price**: Price of a single unit of the product. If unavailable, default to `0`.
+   - **Quantity**: Quantity of product. If unavailable, default to `0`. can be float value
+   - **Total Price**: The total price for the item (calculated as `unit_price × quantity` if not explicitly provided). If unavailable, default to `0`.
+   - **Discount**: Any discounts applied to the item or total. If unavailable, default to `0`.
+   - **GST%**: The GST percentage applied to each item or given in total. If unavailable, default to `0`
+
+   Dont extract the total of the invoice just the individual products
+### Output Format:
+
+{
+  "store_name": "value or None",
+  "invoice_number": "value or None",
+  "invoice_date": "MM/DD/YYYY or today's date", 
+
+  "data": [
+    {
+      "product_name": "value or invoice_number",
+      "unit_price": value or 0,
+      "quantity": value or 0,
+      "total_price": value or 0,
+      "discount": value or 0,
+      "gst%": value or 0
+    }
+    ...
+  ]
+}
+
+Ensure the output is in the specified JSON format for consistency and ease of processing.
 """
+
 
     # Get extraction result
     result = model.generate_content([myfile, prompt])
@@ -124,9 +161,8 @@ def main():
     
     if uploaded_files:
         for uploaded_file in uploaded_files:
-            # Save uploaded file locally
-            input_path = f"./uploaded/{uploaded_file.name}"
-            os.makedirs(os.path.dirname(input_path), exist_ok=True)
+            # Save uploaded file locally in the original folder
+            input_path = os.path.join(os.path.dirname(__file__), uploaded_file.name)
             with open(input_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
