@@ -66,7 +66,7 @@ Extract the following fields from the given image if it represents an invoice or
    - **Total Price**: The total price for the item (calculated as `unit_price × quantity` if not explicitly provided). If unavailable, default to `0`.
    - **Discount**: Any discounts applied to the item or total. If unavailable, default to `0`.
    - **GST%**: The GST percentage applied to each item or given in total. If unavailable, default to `0`
-
+   -vegetable or not: Check if the Product is fruit or vegetable or not
    Dont extract the total of the invoice just the individual products
 ### Output Format:
 
@@ -82,7 +82,7 @@ Extract the following fields from the given image if it represents an invoice or
       "quantity": value or 0,
       "total_price": value or 0,
       "discount": value or 0,
-      "gst%": value or 0
+      "is_fruit_or_vegetable":0 or 1 #False=0 and True=1
     }
     ...
   ]
@@ -94,7 +94,7 @@ Ensure the output is in the specified JSON format for consistency and ease of pr
         # Get extraction result
         result = model.generate_content([myfile, prompt])
         result_text = result.text if hasattr(result, "text") else result.choices[0].text
-
+        print(result_text)
         # Parse the JSON response
         start_index = result_text.find("{")
         end_index = result_text.rfind("}") + 1
@@ -159,16 +159,21 @@ def generate_summary_from_mongodb():
 
     df["invoice_date"] = pd.to_datetime(df["invoice_date"], format="%m/%d/%Y", errors="coerce")
     df["year-month"] = df["invoice_date"].dt.to_period("M")
-    df["gst_amount"] = (df["total_price"] * df["gst%"]) / 100
+    df['gst_amount(6%)'] = (df['total_price'] *5 ) / 100
+    df['qst_amount(9.98%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==0 else (row['total_price'] * 9.98) / 100,axis=1)
+    df['gst_amount(6%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==0 else (row['total_price'] * 6) / 100,axis=1)
+    df['net_amount'] =df['total_price']- (df['gst_amount(6%)']+df['qst_amount(9.98%)'])
 
     summary_df = df.groupby("year-month").agg({
         "quantity": "sum",
         "total_price": "sum",
         "discount": "sum",
-        "gst_amount": "sum"
+        'gst_amount(6%)': 'sum',
+        'qst_amount(9.98%)':'sum',
+        'net_amount':'sum'
     }).reset_index()
 
-    return summary_df
+    return df,summary_df
 
 # Main Processing
 if uploaded_files:
@@ -199,14 +204,13 @@ if uploaded_files:
 
 # Generate and download output
 if download_button:
-    summary_df = generate_summary_from_mongodb()
+    product_df,summary_df = generate_summary_from_mongodb()
 
     if summary_df is not None:
         output_buffer = BytesIO()
 
         with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
             # Save detailed data
-            product_df = pd.DataFrame(list(collection.find()))
             product_df.to_excel(writer, sheet_name="Product Details", index=False)
 
             # Save summary data
