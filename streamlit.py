@@ -221,7 +221,7 @@ if uploaded_files:
 
             for product in invoice_data["data"]:
                 product.update({
-                    "store_name": vendor_name,
+                    "vendor_name": vendor_name,
                     "invoice_number": invoice_number,
                     "invoice_date": invoice_date
                 })
