@@ -55,7 +55,7 @@ Extract the following fields from the given image if it represents an invoice or
 
 ### Fields to Extract:
 1. **General Information:**
-   - **Store/Invoice Name**: The name of the store or invoice title (if available).
+   - **Vendor Name**: The name of the Vendor or invoice title (if available).
    - **Invoice/Receipt Number**: Unique identifier for the invoice or receipt.
    - **Invoice Date**: The date of the invoice in the format MM/DD/YYYY. If the date is missing, use today’s date.
 
@@ -71,7 +71,7 @@ Extract the following fields from the given image if it represents an invoice or
 ### Output Format:
 
 {
-  "store_name": "value or None",
+  "vendor_name": "value or None",
   "invoice_number": "value or None",
   "invoice_date": "MM/DD/YYYY or today's date", 
 
@@ -124,10 +124,10 @@ def append_to_mongodb(invoice_data):
         return
 
     # Extract general information
-    store_name = invoice_data.get("store_name", None)
+    vendor_name = invoice_data.get("store_name", None)
     invoice_number = invoice_data.get("invoice_number", None)
     invoice_date = invoice_data.get("invoice_date", None)
-    invoice_data["store_name"] = store_name
+    invoice_data["vendor_name"] = vendor_name
     invoice_data["invoice_number"] = invoice_number
     invoice_data["invoice_date"] = invoice_date
 
@@ -164,14 +164,44 @@ def generate_summary_from_mongodb():
     df['gst_amount(6%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==0 else (row['total_price'] * 6) / 100,axis=1)
     df['net_amount'] =df['total_price']- (df['gst_amount(6%)']+df['qst_amount(9.98%)'])
 
-    summary_df = df.groupby("year-month").agg({
+    summary_df = df.groupby(
+    ["year-month", "vendor_name"], dropna=False
+).agg({
+    "quantity": "sum",
+    "total_price": "sum",
+    "discount": "sum",
+    'gst_amount(6%)': 'sum',
+    'qst_amount(9.98%)': 'sum',
+    'net_amount': 'sum'
+}).reset_index()
+
+# Add roll-up levels
+    summary_df = pd.concat([
+    summary_df,
+    summary_df.groupby("year-month").agg({
         "quantity": "sum",
         "total_price": "sum",
         "discount": "sum",
         'gst_amount(6%)': 'sum',
-        'qst_amount(9.98%)':'sum',
-        'net_amount':'sum'
-    }).reset_index()
+        'qst_amount(9.98%)': 'sum',
+        'net_amount': 'sum'
+    }).reset_index().assign(vendor_name="Total for Month"),
+    pd.DataFrame(summary_df.agg({
+        "quantity": "sum",
+        "total_price": "sum",
+        "discount": "sum",
+        'gst_amount(6%)': 'sum',
+        'qst_amount(9.98%)': 'sum',
+        'net_amount': 'sum'
+    }).to_dict(), index=[0]).assign(
+        year_month="Grand Total",
+        vendor_name="All Vendors"
+    )
+])
+
+# Adjust column order for clarity
+    columns_order = ["year-month", "vendor_name", "quantity", "total_price", "discount", 'gst_amount(6%)', 'qst_amount(9.98%)', 'net_amount']
+    summary_df = summary_df[columns_order]
 
     return df,summary_df
 
@@ -185,13 +215,13 @@ if uploaded_files:
         invoice_data = extract_invoice_data(image_bytes)
 
         if invoice_data:
-            store_name = invoice_data["store_name"]
+            vendor_name = invoice_data["vendor_name"]
             invoice_number = invoice_data["invoice_number"]
             invoice_date = invoice_data["invoice_date"]
 
             for product in invoice_data["data"]:
                 product.update({
-                    "store_name": store_name,
+                    "store_name": vendor_name,
                     "invoice_number": invoice_number,
                     "invoice_date": invoice_date
                 })
