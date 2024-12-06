@@ -160,8 +160,8 @@ def generate_summary_from_mongodb():
     df["invoice_date"] = pd.to_datetime(df["invoice_date"], format="%m/%d/%Y", errors="coerce")
     df["year-month"] = df["invoice_date"].dt.to_period("M")
     df['gst_amount(6%)'] = (df['total_price'] *5 ) / 100
-    df['qst_amount(9.98%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==0 else (row['total_price'] * 9.98) / 100,axis=1)
-    df['gst_amount(6%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==0 else (row['total_price'] * 6) / 100,axis=1)
+    df['qst_amount(9.98%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==1 else (row['total_price'] * 9.98) / 100,axis=1)
+    df['gst_amount(6%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==1 else (row['total_price'] * 6) / 100,axis=1)
     df['net_amount'] =df['total_price']- (df['gst_amount(6%)']+df['qst_amount(9.98%)'])
 
     summary_df = df.groupby(
