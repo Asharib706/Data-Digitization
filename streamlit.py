@@ -233,7 +233,7 @@ def add_product():
     product_name = st.text_input("Product Name")
     unit_price = st.number_input("Unit Price", min_value=0.0)
     quantity = st.number_input("Quantity", min_value=0.0)
-    total_price = st.number_input("Total Price", min_value=0.0)
+    total_price = unit_price*quantity
     discount = st.number_input("Discount", min_value=0.0)
     is_fruit_or_vegetable=st.filter_value = st.radio("is_fruit_or_vegetable", options=[1, 0])
 
