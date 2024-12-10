@@ -57,24 +57,27 @@ def extract_invoice_data(image_bytes, model_name="gemini-1.5-flash-8b"):
 
         model = genai.GenerativeModel(model_name)
         prompt = """
-Extract the following fields from the given image if it represents an invoice or financial report :
-Note : Dont accept the blurry images
+Extract specific fields from a clear and non-blurry image if it represents an invoice or financial report. 
+If the image is blurry, return an error message indicating that the image is unacceptable for processing. 
+Focus on extracting the following information accurately and structuring it in the specified JSON format.
 
 ### Fields to Extract:
-1. **General Information:**
-   - **Vendor Name**: The name of the Vendor or invoice title (if available).
-   - **Invoice/Receipt Number**: Unique identifier for the invoice or receipt.
-   - **Invoice Date**: The date of the invoice in the format MM/DD/YYYY. If the date is missing, use today’s date.
 
-2. **Item Details (for each product or service):**
-   - **Product/Item Name**: The name of the product or item. If unavailable, use the invoice number as the product name.
-   - **Unit Price**: Price of a single unit of the product. If unavailable, default to `0`.
-   - **Quantity**: Quantity of product. If unavailable, default to `0`. can be float value
-   - **Total Price**: The total price for the item (calculated as `unit_price × quantity` if not explicitly provided). If unavailable, default to `0`.
-   - **Discount**: Any discounts applied to the item or total. If unavailable, default to `0`.
-    -vegetable or not: Check if the Product is fruit or vegetable or not
-   Dont extract the total of the invoice just the individual products
+1. **General Information:**
+   - **Vendor Name**: Extract the name of the vendor or the title of the invoice/receipt (if available). If missing, set to `None`.
+   - **Invoice/Receipt Number**: Extract the unique identifier for the invoice or receipt. If missing, set to `None`.
+   - **Invoice Date**: Extract the invoice date in the format `MM/DD/YYYY`. If unavailable, default to today's date.
+
+2. **Item Details (for the invoice/receipt as a whole):**
+   - **Sub-total**: Extract the subtotal amount from the invoice/receipt. if unavailable give Total Price.
+   - "Tps":"Extract the Tps(Goods and Services Tax) from the reciept,if unavailable set to '0'.
+   - "Tvq":"Extract the Tvq(Quebec Sales Tax) from the reciept,if unavailable set to '0'.
+   -"Tax": total tax from the recipts (should be equal to the sum of Tps and Tvq),if unavailable set to '0'
+   - **Total Price**: Extract the final total amount of the invoice/receipt. If unavailable, set to `0`.
+   - **Discount**: Extract any discounts applied to the invoice/receipt total. If unavailable, default to `0`.
+
 ### Output Format:
+The result should be structured in the following JSON format:
 
 {
   "vendor_name": "value or None",
@@ -83,19 +86,21 @@ Note : Dont accept the blurry images
 
   "data": [
     {
-      "product_name": "value or invoice_number",
-      "unit_price": value or 0,
-      "quantity": value or 0,
+      "sub_total": value or 0,
+      "tps":value or 0,
+      "tvq":value or 0,
+      "tax": value or 0,
       "total_price": value or 0,
-      "discount": value or 0,
-      "is_fruit_or_vegetable":0 or 1 #False=0 and True=1
+      "discount": value or 0
     }
-    ...
   ]
 }
 
-Ensure the output is in the specified JSON format for consistency and ease of processing.
+### Notes:
+- If the image is blurry, output: {"error": "The image is blurry and cannot be processed."}
+- Ensure the extraction is accurate and adheres to the specified JSON format.
 """
+
         result = model.generate_content([myfile, prompt])
         result_text = result.text if hasattr(result, "text") else result.choices[0].text
 
@@ -113,91 +118,110 @@ Ensure the output is in the specified JSON format for consistency and ease of pr
             os.remove(temp_file_path)
 
 def append_to_mongodb(invoice_data):
-    if not invoice_data or "data" not in invoice_data:
-        st.error("No product data found in the invoice.")
-        return
-    
-    vendor_name = invoice_data.get("vendor_name", None)
-    invoice_number = invoice_data.get("invoice_number", None)
-    invoice_date = invoice_data.get("invoice_date", None)
-    invoice_data["vendor_name"] = vendor_name
-    invoice_data["invoice_number"] = invoice_number
-    invoice_data["invoice_date"] = invoice_date
+    try:
+        if not invoice_data or "data" not in invoice_data:
+            st.error("No data found in the invoice.")
+            return
 
-    for product in invoice_data["data"]:
-        product.update({
-            "username": st.session_state.username,
+        vendor_name = invoice_data.get("vendor_name", None)
+        invoice_number = invoice_data.get("invoice_number", None)
+        invoice_date = invoice_data.get("invoice_date", None)
+
+        if not vendor_name or not invoice_number or not invoice_date:
+            raise ValueError("Missing essential invoice fields: 'vendor_name', 'invoice_number', or 'invoice_date'.")
+
+        for item in invoice_data["data"]:
+            if not isinstance(item, dict):
+                raise ValueError(f"Invalid data format for item: {item}")
+
+            item.update({"username": st.session_state.username})
             
-        })
-        product_collection.update_one(
-            {"invoice_number": invoice_number,
-             "invoice_date": invoice_date,
-             "vendor_name":vendor_name,
-             "product_name": product["product_name"], 
-             "username": st.session_state.username},
-            {"$set": product},
-            upsert=True
-        )
+            product_collection.update_one(
+                {
+                    "invoice_number": invoice_number,
+                    "invoice_date": invoice_date,
+                    "vendor_name": vendor_name,
+                    "username": st.session_state.username,
+                },
+                {"$set": item},
+                upsert=True
+            )
+    except Exception as e:
+        st.error(f"An error occurred while appending data to MongoDB: {e}")
+
 def generate_summary_from_mongodb(username):
-    # Fetch all data for the specific user
-    all_data = list(product_collection.find({"username": username}))
-    
-    if not all_data:
-        return None
+    try:
+        if not username:
+            raise ValueError("Username is required to fetch data.")
 
-    # Create a DataFrame from the retrieved data
-    df = pd.DataFrame(all_data)
-    if df.empty:
-        return None
+        # Fetch all data for the specific user
+        all_data = list(product_collection.find({"username": username}))
+        if not all_data:
+            st.warning("No data found for the specified user.")
+            return None
 
-    df["invoice_date"] = pd.to_datetime(df["invoice_date"], format="%m/%d/%Y", errors="coerce")
-    df["year-month"] = df["invoice_date"].dt.to_period("M")
-    df['gst_amount(6%)'] = (df['total_price'] *5 ) / 100
-    df['qst_amount(9.98%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==1 else (row['total_price'] * 9.98) / 100,axis=1)
-    df['gst_amount(6%)'] = df.apply(lambda row: 0 if row['is_fruit_or_vegetable']==1 else (row['total_price'] * 6) / 100,axis=1)
-    df['net_amount'] =df['total_price']- (df['gst_amount(6%)']+df['qst_amount(9.98%)'])
+        # Create a DataFrame from the retrieved data
+        df = pd.DataFrame(all_data)
+        if df.empty:
+            st.warning("No data available to create a summary.")
+            return None
 
-    summary_df = df.groupby(
-    ["year-month", "vendor_name"], dropna=False
-).agg({
-    "quantity": "sum",
-    "total_price": "sum",
-    "discount": "sum",
-    'gst_amount(6%)': 'sum',
-    'qst_amount(9.98%)': 'sum',
-    'net_amount': 'sum'
-}).reset_index()
+        # Ensure required columns exist
+        required_columns = ["invoice_date", "total_price", "sub_total",'tps','tvq',"tax", "discount"]
+        for col in required_columns:
+            if col not in df.columns:
+                raise KeyError(f"Missing required field in the data: {col}")
 
-# Add roll-up levels
-    summary_df = pd.concat([
-    summary_df,
-    summary_df.groupby("year-month").agg({
-        "quantity": "sum",
-        "total_price": "sum",
-        "discount": "sum",
-        'gst_amount(6%)': 'sum',
-        'qst_amount(9.98%)': 'sum',
-        'net_amount': 'sum'
-    }).reset_index().assign(vendor_name="Total for Month"),
-    pd.DataFrame(summary_df.agg({
-        "quantity": "sum",
-        "total_price": "sum",
-        "discount": "sum",
-        'gst_amount(6%)': 'sum',
-        'qst_amount(9.98%)': 'sum',
-        'net_amount': 'sum'
-    }).to_dict(), index=[0]).assign(
-        year_month="Grand Total",
-        vendor_name="All Vendors"
-    )
-])
+        df["invoice_date"] = pd.to_datetime(df["invoice_date"], format="%m/%d/%Y", errors="coerce")
+        df["year-month"] = df["invoice_date"].dt.to_period("M")
 
-# Adjust column order for clarity
-    columns_order = ["year-month", "vendor_name", "quantity", "total_price", "discount", 'gst_amount(6%)', 'qst_amount(9.98%)', 'net_amount']
-    summary_df = summary_df[columns_order]
 
-    return df,summary_df
+        # Grouped summary
+        summary_df = df.groupby(["year-month", "vendor_name"], dropna=False).agg({
+            "sub_total": "sum",
+            'tps':'sum',
+            'tvq':'sum',
+            "tax": "sum",
+            "total_price": "sum",
+            "discount": "sum",
+        }).reset_index()
 
+        # Add roll-up levels
+        summary_df = pd.concat([
+            summary_df,
+            summary_df.groupby("year-month").agg({
+                "sub_total": "sum",
+                'tps':'sum',
+                'tvq':'sum',
+                "tax": "sum",
+                "total_price": "sum",
+                "discount": "sum"
+            }).reset_index().assign(vendor_name="Total for Month"),
+            pd.DataFrame(summary_df.agg({
+                "sub_total": "sum",
+                'tps':'sum',
+                'tvq':'sum',
+                "tax": "sum",
+
+                "total_price": "sum",
+                "discount": "sum"
+            }).to_dict(), index=[0]).assign(
+                year_month="Grand Total",
+                vendor_name="All Vendors"
+            )
+        ])
+
+        # Adjust column order for clarity
+        columns_order = ["year-month", "vendor_name", "sub_total", "tax","tps", "tvq","total_price", "discount"]
+        summary_df = summary_df[columns_order]
+
+        return df, summary_df
+    except KeyError as ke:
+        st.error(f"Data inconsistency error: {ke}")
+    except ValueError as ve:
+        st.error(f"Validation error: {ve}")
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {e}")
 
 # User Authentication
 def login():
@@ -226,34 +250,58 @@ def signup():
 # Product Management
 def add_product():
     st.header("Add Product")
-    invoice_number=st.text_input("Invoice Number")
-    today = datetime.now()
-    invoice_date=today.strftime("%m/%d/%Y")
-    vendor_name=st.text_input("Vendor Name")
-    product_name = st.text_input("Product Name")
-    unit_price = st.number_input("Unit Price", min_value=0.0)
-    quantity = st.number_input("Quantity", min_value=0.0)
-    total_price = unit_price*quantity
+
+    # Input fields for invoice and product details
+    invoice_number = st.text_input("Invoice Number")
+    user_date_input = st.text_input("Invoice Date (Format MM/DD/YYYY, optional)")
+    if user_date_input:
+        try:
+            # Validate the input date
+            invoice_date = datetime.strptime(user_date_input, "%m/%d/%Y").strftime("%m/%d/%Y")
+        except ValueError:
+            st.error("Invalid date format. Please use MM/DD/YYYY.")
+            return
+    else:
+        # Default to today's date
+        today = datetime.now()
+        invoice_date = today.strftime("%m/%d/%Y")
+
+    vendor_name = st.text_input("Vendor Name")
+    sub_total = st.number_input("Sub Total", min_value=0.0)
+    tps=st.number_input("TPS (Goods and Services Tax)", min_value=0.0)
+    tvq=st.number_input("TQV (Quebec Sales Tax)", min_value=0.0)
+    tax=tps+tvq
+
+    total_price = st.number_input("Total Price", min_value=0.0)
     discount = st.number_input("Discount", min_value=0.0)
-    is_fruit_or_vegetable=st.filter_value = st.radio("is_fruit_or_vegetable", options=[1, 0])
+
 
 
     if st.button("Add Product"):
-        if st.session_state.logged_in:
-            product = {
-                "username": st.session_state.username,
-                "invoice_number": invoice_number,
-                "invoice_date": invoice_date,
-                "vendor_name":vendor_name,
-                "product_name": product_name,
-                "unit_price": unit_price,
-                "quantity": quantity,
-                "total_price": total_price,
-                "discount": discount,
-                "is_fruit_or_vegetable":is_fruit_or_vegetable
-            }
-            product_collection.insert_one(product)
-            st.success("Product added successfully!")
+        # Check if user is logged in
+        if st.session_state.get("logged_in", False):
+            try:
+                # Create the product dictionary
+                product = {
+                    "username": st.session_state.username,
+                    "invoice_number": invoice_number,
+                    "invoice_date": invoice_date,
+                    "vendor_name": vendor_name,
+                    
+                    "sub_total":sub_total,
+                    "tps":tps,
+                    "tvq":tvq,
+                    "tax":tax,
+                    "total_price": total_price,
+                    "discount": discount,
+                    
+                }
+
+                # Insert product into the database
+                product_collection.insert_one(product)
+                st.success("Product added successfully!")
+            except Exception as e:
+                st.error(f"An error occurred while adding the product: {e}")
         else:
             st.error("You must be logged in to add products.")
 
@@ -316,7 +364,7 @@ else:
                     # Save detailed data to a separate sheet
                     
                         # Drop MongoDB-specific fields for cleaner output if needed
-                    product_data.to_excel(writer, sheet_name="Product Details", index=False)
+                    product_data.to_excel(writer, sheet_name="Invoice Details", index=False)
 
                     # Save summary data to another sheet
                     summary_df.to_excel(writer, sheet_name="Summary by Month", index=False)
