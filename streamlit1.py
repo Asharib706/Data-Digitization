@@ -30,7 +30,7 @@ product_collection = db[PRODUCT_COLLECTION]
 user_collection = db[USER_COLLECTION]
 
 # Streamlit UI
-st.title("Invoice and Product Management System")
+st.title("An Automated System for Digitization and Analysis of Financial Documents")
 
 # Session State for Login
 if "logged_in" not in st.session_state:
